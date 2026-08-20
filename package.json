@@ -8,8 +8,8 @@
     "dev:server": "npm run dev --prefix server",
     "dev:client": "npm run dev --prefix client",
     "build": "npm install --prefix client && npm run build --prefix client",
-    "start": "npm start --prefix server",
-    "lan": "npm run lan --prefix server",
+    "start": "npm run build --prefix client && npm start --prefix server",
+    "lan": "npm run build --prefix client && npm run lan --prefix server",
     "test": "npm test --prefix server"
   },
   "dependencies": {

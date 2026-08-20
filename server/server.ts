@@ -16,11 +16,17 @@ import {
 } from '../shared/gameEngine.js';
 import { Card, ServerGameState, ClientGameState, Player, GameStatus, Rank } from '../shared/types.js';
 
+import path from 'path';
+
 const app = express();
 app.use(cors());
 
+// Serve built React client static files
+const clientDistPath = path.resolve(__dirname, '../client/dist');
+app.use(express.static(clientDistPath));
+
 // Health check endpoint
-app.get('/health', (req, res) => {
+app.get('/health', (_req, res) => {
   res.send({ status: 'ok', time: new Date() });
 });
 
@@ -625,6 +631,11 @@ const PORT = process.env.PORT || 3001;
 // LAN Mode checking
 const args = process.argv.slice(2);
 const isLanMode = args.includes('--lan');
+
+// SPA Fallback: serve index.html for any unknown routes
+app.get('*', (_req, res) => {
+  res.sendFile(path.resolve(clientDistPath, 'index.html'));
+});
 
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);

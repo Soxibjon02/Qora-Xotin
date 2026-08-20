@@ -46,7 +46,7 @@ export default function App() {
       if (!active) return;
       try {
         const state = await gameService.getState(session.roomId, session.playerId);
-        if (!active) return;
+        if (!active || !state) return;
 
         setGameState(prev => {
           // Sound/confetti on status transitions

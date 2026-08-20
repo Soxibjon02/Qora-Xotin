@@ -1,58 +1,86 @@
 /**
  * gameService.ts
- * Replaces Socket.IO with HTTP polling against Vercel Serverless Functions.
- * All state lives in Upstash Redis (server-side).
+ * HTTP REST API client with automatic silent retry mechanism.
  */
 
 import type { ClientGameState, Card } from '../../../shared/types.js';
 
 const BASE = '/api/game';
 
-async function post(action: string, body: Record<string, unknown>) {
-  const res = await fetch(`${BASE}?action=${action}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  const json = await res.json();
-  if (!res.ok) throw new Error(json.error || 'Server xatoligi.');
-  return json as ClientGameState & { lastDrawnCard?: Card; pairsFound?: string[] };
+// Helper for sleeping between retries
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+async function postWithRetry(action: string, body: Record<string, unknown>, retries = 3) {
+  let lastError: Error = new Error('Server bilan bog\'lanishda xatolik.');
+
+  for (let attempt = 0; attempt < retries; attempt++) {
+    try {
+      const res = await fetch(`${BASE}?action=${action}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+
+      const json = await res.json().catch(() => ({}));
+
+      // If successful response
+      if (res.ok) {
+        return json as ClientGameState & { lastDrawnCard?: Card; pairsFound?: string[] };
+      }
+
+      // If business logic error (e.g. "Not your turn", "Name taken"), don't retry, throw immediately
+      if (res.status === 400 || res.status === 403) {
+        throw new Error(json.error || 'Noto\'g me\'yori.');
+      }
+
+      // If 404 (cold start / room transient state) or 5xx, retry after brief delay
+      lastError = new Error(json.error || 'Server javob bermadi.');
+    } catch (err: any) {
+      if (err.message && (err.message.includes('turn') || err.message.includes('Ism') || err.message.includes('Host'))) {
+        throw err;
+      }
+      lastError = err;
+    }
+
+    // Wait before retrying (150ms, 350ms...)
+    if (attempt < retries - 1) {
+      await sleep(150 * (attempt + 1));
+    }
+  }
+
+  throw lastError;
 }
 
 export const gameService = {
-  /** Create a new room. Returns full sanitized state for the host. */
   createRoom: (playerName: string, avatar: string) =>
-    post('create-room', { playerName, avatar }),
+    postWithRetry('create-room', { playerName, avatar }),
 
-  /** Join an existing room by code. */
   joinRoom: (roomId: string, playerName: string, avatar: string) =>
-    post('join-room', { roomId: roomId.toUpperCase(), playerName, avatar }),
+    postWithRetry('join-room', { roomId: roomId.toUpperCase(), playerName, avatar }),
 
-  /** Toggle this player's ready status. */
   toggleReady: (roomId: string, playerId: string) =>
-    post('toggle-ready', { roomId, playerId }),
+    postWithRetry('toggle-ready', { roomId, playerId }),
 
-  /** Host starts the game. */
   startGame: (roomId: string, playerId: string) =>
-    post('start-game', { roomId, playerId }),
+    postWithRetry('start-game', { roomId, playerId }),
 
-  /** Current player draws a card from targetPlayer at cardIndex. */
   drawCard: (roomId: string, playerId: string, targetPlayerId: string, cardIndex: number) =>
-    post('draw-card', { roomId, playerId, targetPlayerId, cardIndex }),
+    postWithRetry('draw-card', { roomId, playerId, targetPlayerId, cardIndex }),
 
-  /** Host kicks a player. */
   kickPlayer: (roomId: string, playerId: string, targetPlayerId: string) =>
-    post('kick-player', { roomId, playerId, targetPlayerId }),
+    postWithRetry('kick-player', { roomId, playerId, targetPlayerId }),
 
-  /** Host restarts game back to lobby. */
   restart: (roomId: string, playerId: string) =>
-    post('restart', { roomId, playerId }),
+    postWithRetry('restart', { roomId, playerId }),
 
-  /** Poll for latest game state. Called every 800ms by the polling hook. */
-  getState: async (roomId: string, playerId: string): Promise<ClientGameState> => {
-    const res = await fetch(`${BASE}?action=state&roomId=${roomId}&playerId=${playerId}`);
-    const json = await res.json();
-    if (!res.ok) throw new Error(json.error || 'Holat yuklanmadi.');
-    return json as ClientGameState;
+  getState: async (roomId: string, playerId: string): Promise<ClientGameState | null> => {
+    try {
+      const res = await fetch(`${BASE}?action=state&roomId=${roomId}&playerId=${playerId}`);
+      if (!res.ok) return null; // silently return null on transient 404/500
+      const json = await res.json();
+      return json as ClientGameState;
+    } catch {
+      return null; // keep polling silently on network drop
+    }
   },
 };
