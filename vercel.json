@@ -1,0 +1,15 @@
+{
+  "version": 2,
+  "buildCommand": "npm install --prefix client && npm run build --prefix client && cp -r client/dist/* .",
+  "outputDirectory": "client/dist",
+  "rewrites": [
+    { "source": "/api/(.*)", "destination": "/api/$1" },
+    { "source": "/(.*)", "destination": "/index.html" }
+  ],
+  "functions": {
+    "api/game.ts": {
+      "memory": 256,
+      "maxDuration": 10
+    }
+  }
+}
